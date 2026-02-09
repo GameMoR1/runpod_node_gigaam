@@ -71,7 +71,7 @@ python run.py
 
 При старте сервис:
 
-1) Берёт из таблицы `whisper_models` все строки, где `source='gigaam'`.
+1) Берёт из таблицы `whisper_models` все строки, где `source='GigaAM'`.
 2) Для найденных `id_model` проверяет, что в `model_settings` есть записи с `enabled=true`.
 3) Модели, которые включены, скачиваются в cache GigaAM (по умолчанию `~/.cache/gigaam`).
 

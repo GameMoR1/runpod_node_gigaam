@@ -49,7 +49,7 @@ class ModelRegistry:
                 FROM whisper_models
                 WHERE source = :source
                 """,
-                {"source": "gigaam"},
+                {"source": "GigaAM"},
             )
         except Exception:
             rows = await fetch_all(
@@ -58,7 +58,7 @@ class ModelRegistry:
                 FROM whisper_models
                 WHERE source = :source
                 """,
-                {"source": "gigaam"},
+                {"source": "GigaAM"},
             )
 
         try:

@@ -151,7 +151,7 @@ def _dashboard_html() -> str:
   <head>
     <meta charset=\"utf-8\" />
     <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-    <title>Whisper CUDA</title>
+    <title>GigaAM CUDA</title>
     <script src=\"https://unpkg.com/lucide@latest\"></script>
     <style>
       :root {
