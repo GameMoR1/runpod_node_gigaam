@@ -31,6 +31,11 @@ async def transcribe_on_gpu(
             await asyncio.sleep(0.5)
 
     def run_blocking_sync() -> dict[str, Any]:
+        import contextlib
+        import os
+        import tempfile
+        import wave
+
         import torch
         import gigaam
 
@@ -47,18 +52,95 @@ async def transcribe_on_gpu(
                 except TypeError:
                     model = gigaam.load_model(model_name)
 
+            def _extract(out_any: Any) -> tuple[str, list[dict[str, Any]]]:
+                if isinstance(out_any, str):
+                    return out_any, []
+                if isinstance(out_any, dict):
+                    t = out_any.get("text")
+                    text0 = t if isinstance(t, str) else ""
+                    seg = out_any.get("segments")
+                    segs0 = [s for s in seg if isinstance(s, dict)] if isinstance(seg, list) else []
+                    return text0, segs0
+                return str(out_any), []
+
+            def _chunk_transcribe(max_seconds: float = 24.0) -> Any:
+                tmp_paths: list[str] = []
+                try:
+                    with contextlib.closing(wave.open(wav_path, "rb")) as wf:
+                        nchannels = wf.getnchannels()
+                        sampwidth = wf.getsampwidth()
+                        framerate = wf.getframerate()
+                        nframes = wf.getnframes()
+                        chunk_frames = max(1, int(max_seconds * framerate))
+
+                        merged_segments: list[dict[str, Any]] = []
+
+                        offset_s = 0.0
+                        frames_left = nframes
+                        idx = 0
+
+                        while frames_left > 0:
+                            take = min(chunk_frames, frames_left)
+                            frames = wf.readframes(take)
+                            frames_left -= take
+
+                            with tempfile.NamedTemporaryFile(
+                                mode="wb", suffix=f".chunk{idx}.wav", delete=False, dir=os.path.dirname(wav_path)
+                            ) as tf:
+                                tmp_path = tf.name
+                            tmp_paths.append(tmp_path)
+
+                            with contextlib.closing(wave.open(tmp_path, "wb")) as wout:
+                                wout.setnchannels(nchannels)
+                                wout.setsampwidth(sampwidth)
+                                wout.setframerate(framerate)
+                                wout.writeframes(frames)
+
+                            part = model.transcribe(tmp_path)
+                            part_text, part_segments = _extract(part)
+
+                            if part_segments:
+                                for s in part_segments:
+                                    ss = dict(s)
+                                    for k in ("start", "end"):
+                                        v = ss.get(k)
+                                        if isinstance(v, (int, float)):
+                                            ss[k] = float(v) + offset_s
+                                    merged_segments.append(ss)
+                            elif part_text:
+                                merged_segments.append(
+                                    {
+                                        "start": offset_s,
+                                        "end": offset_s + float(take) / float(framerate),
+                                        "text": part_text,
+                                        "chunk_index": idx,
+                                    }
+                                )
+
+                            offset_s += float(take) / float(framerate)
+                            idx += 1
+
+                    return {"text": None, "segments": merged_segments}
+                finally:
+                    for p in tmp_paths:
+                        try:
+                            os.remove(p)
+                        except Exception:
+                            pass
+
             try:
                 out = model.transcribe(wav_path)
             except ValueError as e:
                 msg = str(e)
                 if "transcribe_longform" in msg or "Too long" in msg:
                     fn = getattr(model, "transcribe_longform", None)
-                    if fn is None:
-                        raise RuntimeError(
-                            "Audio is too long for gigaam.transcribe(); "
-                            "install longform deps and use transcribe_longform"
-                        ) from e
-                    out = fn(wav_path)
+                    if fn is not None:
+                        try:
+                            out = fn(wav_path)
+                        except Exception:
+                            out = _chunk_transcribe()
+                    else:
+                        out = _chunk_transcribe()
                 else:
                     raise
         finally:
@@ -71,23 +153,17 @@ async def transcribe_on_gpu(
             except Exception:
                 pass
 
-        text = ""
-        segments: list[dict[str, Any]] = []
-
-        if isinstance(out, str):
-            text = out
-        elif isinstance(out, dict):
-            t = out.get("text")
-            if isinstance(t, str):
-                text = t
-            seg = out.get("segments")
-            if isinstance(seg, list):
-                segments = [s for s in seg if isinstance(s, dict)]
-        else:
-            text = str(out)
+        text, segments = _extract(out)
 
         text_pp = postprocess_text(text)
-        token_count = len(text_pp.split()) if text_pp else 0
+        if text_pp:
+            token_count = len(text_pp.split())
+        else:
+            token_count = 0
+            for s in segments:
+                t = s.get("text") if isinstance(s, dict) else None
+                if isinstance(t, str) and t:
+                    token_count += len(postprocess_text(t).split())
         peak_alloc_mb = float(torch.cuda.max_memory_allocated(gpu_index)) / (1024 * 1024)
 
         return {
