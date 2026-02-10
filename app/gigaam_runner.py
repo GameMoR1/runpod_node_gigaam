@@ -65,6 +65,11 @@ async def transcribe_on_gpu(
                 except Exception:
                     return 0.0
 
+            def _assert_nonempty_wav(path: str) -> None:
+                with wave.open(path, "rb") as wf:
+                    if wf.getnframes() <= 0 or wf.getframerate() <= 0:
+                        raise RuntimeError("empty wav audio")
+
             def _extract_text(out_any: Any) -> str:
                 if isinstance(out_any, str):
                     return out_any
@@ -98,15 +103,19 @@ async def transcribe_on_gpu(
 
             def _chunk_transcribe(*, chunk_duration_s: float = 20.0) -> tuple[str, list[dict[str, Any]]]:
                 total = _duration_s()
+                if total <= 0.01:
+                    raise RuntimeError("empty audio after preprocessing")
                 start = 0.0
                 segs: list[dict[str, Any]] = []
 
-                while start < total:
+                while start + 0.01 < total:
                     end = min(start + chunk_duration_s, total)
+                    if end - start <= 0.01:
+                        break
                     fd, chunk_path = tempfile.mkstemp(suffix=".wav", dir=os.path.dirname(wav_path) or None)
                     os.close(fd)
                     try:
-                        cmd_copy = [
+                        cmd_re = [
                             settings.FFMPEG_PATH,
                             "-y",
                             "-loglevel",
@@ -117,33 +126,16 @@ async def transcribe_on_gpu(
                             str(end - start),
                             "-i",
                             wav_path,
-                            "-acodec",
-                            "copy",
+                            "-ac",
+                            "1",
+                            "-ar",
+                            "16000",
+                            "-c:a",
+                            "pcm_s16le",
                             chunk_path,
                         ]
-                        try:
-                            subprocess.run(cmd_copy, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        except Exception:
-                            cmd_re = [
-                                settings.FFMPEG_PATH,
-                                "-y",
-                                "-loglevel",
-                                "error",
-                                "-ss",
-                                str(start),
-                                "-t",
-                                str(end - start),
-                                "-i",
-                                wav_path,
-                                "-ac",
-                                "1",
-                                "-ar",
-                                "16000",
-                                "-c:a",
-                                "pcm_s16le",
-                                chunk_path,
-                            ]
-                            subprocess.run(cmd_re, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        subprocess.run(cmd_re, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        _assert_nonempty_wav(chunk_path)
 
                         part = model.transcribe(chunk_path)
                         part_text = _extract_text(part)
@@ -159,6 +151,8 @@ async def transcribe_on_gpu(
                 return full_text, segs
 
             duration_s = _duration_s()
+            if duration_s <= 0.01:
+                raise RuntimeError("empty audio after preprocessing")
             if duration_s and duration_s <= 25.0:
                 out_short = model.transcribe(wav_path)
                 text0 = _extract_text(out_short)
