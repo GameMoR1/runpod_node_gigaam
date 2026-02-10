@@ -8,6 +8,7 @@ FastAPI-сервис для CUDA-транскрибации на базе `gigaa
 - NVIDIA GPU + драйвер
 - CUDA runtime (рекомендуется CUDA 11.8)
 - `ffmpeg` доступен в PATH
+- Для длинных аудио (более ~25 секунд) используется `transcribe_longform` (ставь зависимости как `gigaam[longform]`).
 
 ## Установка
 
@@ -19,10 +20,10 @@ python -m venv .venv
 python -m pip install --upgrade pip setuptools wheel
 ```
 
-2) Установка одной командой (рекомендуется):
+2) Установка:
 
 ```bash
-pip install -r requirements-all.txt
+pip install -r requirements.txt
 ```
 
 Если `torch.version.cuda` показывает `None`, значит поставился CPU-only PyTorch — удали `torch/torchvision/torchaudio` и поставь заново (или используй `--force-reinstall`).
@@ -31,14 +32,6 @@ pip install -r requirements-all.txt
 
 ```bash
 python -c "import torch; print('cuda', torch.version.cuda, 'available', torch.cuda.is_available(), 'gpus', torch.cuda.device_count())"
-```
-
-Альтернатива (если хочешь ставить по шагам):
-
-```bash
-pip install -r requirements.txt
-pip install -r requirements-torch-cu118.txt
-pip install -r requirements-gigaam.txt
 ```
 
 Примечание: на Windows рекомендуется Python 3.11–3.12. На Python 3.13 часть зависимостей может потребовать сборку из исходников.

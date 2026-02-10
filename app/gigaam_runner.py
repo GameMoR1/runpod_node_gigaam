@@ -47,7 +47,20 @@ async def transcribe_on_gpu(
                 except TypeError:
                     model = gigaam.load_model(model_name)
 
-            out = model.transcribe(wav_path)
+            try:
+                out = model.transcribe(wav_path)
+            except ValueError as e:
+                msg = str(e)
+                if "transcribe_longform" in msg or "Too long" in msg:
+                    fn = getattr(model, "transcribe_longform", None)
+                    if fn is None:
+                        raise RuntimeError(
+                            "Audio is too long for gigaam.transcribe(); "
+                            "install longform deps and use transcribe_longform"
+                        ) from e
+                    out = fn(wav_path)
+                else:
+                    raise
         finally:
             try:
                 del model
@@ -117,4 +130,3 @@ async def transcribe_on_gpu(
         "vram_used_percent_max": vram_used_pct_max,
     }
     return res
-
