@@ -13,7 +13,7 @@ jobs:
     env:
       DB_HOST: localhost
       DB_PORT: 5432
-      DB_NAME: test_db
+      DB_NAME: test_gigaam_db
       DB_USER: test
       DB_PASS: test
     
