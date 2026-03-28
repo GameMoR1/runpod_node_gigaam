@@ -231,15 +231,15 @@ class TestE2E:
                 "status": "completed",
                 "model": kwargs["model"],
                 "language": kwargs["language"],
-                "callback_url": "http://unavailable.callback",
-                "created_at_ms": 1000000,
-                "started_at_ms": 1000000,
-                "finished_at_ms": 1005000,
+                "queue_time_s": 0.0,
+                "processing_time_s": 0.0,
                 "result": {"text": "привет", "segments": []},
                 "error": None,
-                "callback_delivered_at_ms": None,
-                "callback_error": "connection failed",
-                "file_dir": kwargs["file_dir"],
+                "callback": {
+                    "delivered": False,
+                    "delivered_at_ms": None,
+                    "error": "connection failed",
+                },
             }
             mock_app_state.queue.get_job.return_value = job_mock
             return None
@@ -302,15 +302,15 @@ class TestE2E:
             "status": "completed",
             "model": "v1_ctc",
             "language": "ru",
-            "callback_url": "http://cb",
-            "created_at_ms": 1000000,
-            "started_at_ms": 1000000,
-            "finished_at_ms": 1005000,
+            "queue_time_s": 0.0,
+            "processing_time_s": 0.0,
             "result": {"text": "привет", "segments": []},
             "error": None,
-            "callback_delivered_at_ms": 1006000,
-            "callback_error": None,
-            "file_dir": "/tmp/job_ru",
+            "callback": {
+                "delivered": True,
+                "delivered_at_ms": 1006000,
+                "error": None,
+            },
         }
         mock_app_state.queue.get_job.return_value = job_mock
 

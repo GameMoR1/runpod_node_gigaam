@@ -191,7 +191,6 @@ def mock_time():
 @pytest.fixture
 def mock_fetch_hugging_face_token():
     with patch("app.db.fetch_hugging_face_token") as mock:
-        mock.return_value = None
         yield mock
 
 @pytest.fixture
