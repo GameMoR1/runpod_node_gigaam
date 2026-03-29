@@ -297,7 +297,7 @@ class TestE2E:
             callback_error=None,
             file_dir="/tmp/job_ru",
         )
-        job_mock.serialize_job.return_value = {
+        mock_app_state.queue.serialize_job.return_value = {
             "job_id": "job_ru",
             "status": "completed",
             "model": "v1_ctc",

@@ -190,7 +190,7 @@ def mock_time():
 
 @pytest.fixture
 def mock_fetch_hugging_face_token():
-    with patch("app.db.fetch_hugging_face_token") as mock:
+    with patch("app.state.fetch_hugging_face_token", new_callable=AsyncMock) as mock:
         yield mock
 
 @pytest.fixture
