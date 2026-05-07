@@ -275,6 +275,11 @@ async def transcribe_chunks_on_gpu(
             await asyncio.sleep(0.5)
 
     def run_blocking_sync() -> dict[str, Any]:
+        import os
+        import subprocess
+        import tempfile
+        import wave
+
         import torch
         import gigaam
 
@@ -294,18 +299,131 @@ async def transcribe_chunks_on_gpu(
             segs: list[dict[str, Any]] = []
             texts: list[str] = []
 
-            for chunk in chunks:
-                out_any = model.transcribe(str(chunk.path))
+            from app.config import settings
+
+            def _wav_duration_s(path: str) -> float:
+                try:
+                    with wave.open(path, "rb") as wf:
+                        fr = wf.getframerate()
+                        nframes = wf.getnframes()
+                        if fr <= 0:
+                            return 0.0
+                        return float(nframes) / float(fr)
+                except Exception:
+                    return 0.0
+
+            def _segments_from_longform(utterances: Any) -> list[dict[str, Any]]:
+                out: list[dict[str, Any]] = []
+                if not isinstance(utterances, list):
+                    return out
+                for utt in utterances:
+                    if not isinstance(utt, dict):
+                        continue
+                    b = utt.get("boundaries")
+                    if not (isinstance(b, (list, tuple)) and len(b) >= 2):
+                        continue
+                    start, end = b[0], b[1]
+                    if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+                        continue
+                    txt = utt.get("transcription")
+                    out.append(
+                        {
+                            "start": float(start),
+                            "end": float(end),
+                            "text": str(txt) if isinstance(txt, str) else "",
+                        }
+                    )
+                return out
+
+            def _extract_text(out_any: Any) -> str:
                 if isinstance(out_any, str):
-                    t0 = out_any
-                    seg0: list[dict[str, Any]] = []
-                elif isinstance(out_any, dict):
-                    t0 = out_any.get("text") if isinstance(out_any.get("text"), str) else ""
-                    seg0 = out_any.get("segments") if isinstance(out_any.get("segments"), list) else []
-                    seg0 = [s for s in seg0 if isinstance(s, dict)]
-                else:
-                    t0 = str(out_any)
-                    seg0 = []
+                    return out_any
+                if isinstance(out_any, dict):
+                    t = out_any.get("text")
+                    return t if isinstance(t, str) else ""
+                return str(out_any)
+
+            def _chunk_file_transcribe(path: str, *, chunk_duration_s: float = 20.0) -> tuple[str, list[dict[str, Any]]]:
+                total = _wav_duration_s(path)
+                if total <= 0.01:
+                    return "", []
+                start = 0.0
+                parts: list[dict[str, Any]] = []
+                while start + 0.01 < total:
+                    end = min(start + chunk_duration_s, total)
+                    if end - start <= 0.01:
+                        break
+                    fd, chunk_path = tempfile.mkstemp(suffix=".wav", dir=os.path.dirname(path) or None)
+                    os.close(fd)
+                    try:
+                        cmd = [
+                            settings.FFMPEG_PATH,
+                            "-y",
+                            "-loglevel",
+                            "error",
+                            "-ss",
+                            str(start),
+                            "-t",
+                            str(end - start),
+                            "-i",
+                            path,
+                            "-ac",
+                            "1",
+                            "-ar",
+                            "16000",
+                            "-c:a",
+                            "pcm_s16le",
+                            chunk_path,
+                        ]
+                        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        out_any = model.transcribe(chunk_path)
+                        t = _extract_text(out_any)
+                        parts.append({"start": float(start), "end": float(end), "text": t})
+                    finally:
+                        try:
+                            os.remove(chunk_path)
+                        except Exception:
+                            pass
+                    start = end
+                full = " ".join(p.get("text") or "" for p in parts).strip()
+                return full, parts
+
+            def _safe_transcribe(path: str) -> tuple[str, list[dict[str, Any]]]:
+                """
+                GigaAM throws ValueError for too-long audio in transcribe().
+                Use transcribe_longform() when available; otherwise fall back to internal splitting.
+                """
+                dur = _wav_duration_s(path)
+                fn = getattr(model, "transcribe_longform", None)
+                if dur > 25.0 and fn is not None:
+                    utterances = fn(path)
+                    segs0 = _segments_from_longform(utterances)
+                    if segs0:
+                        txt0 = " ".join(s.get("text") or "" for s in segs0).strip()
+                        return txt0, segs0
+
+                try:
+                    out_any = model.transcribe(path)
+                    txt = _extract_text(out_any)
+                    segs0 = []
+                    if isinstance(out_any, dict) and isinstance(out_any.get("segments"), list):
+                        segs0 = [s for s in out_any.get("segments") if isinstance(s, dict)]
+                    if segs0:
+                        return txt, segs0
+                    return txt, []
+                except ValueError as e:
+                    msg = str(e)
+                    if "Too long wav file" in msg and fn is not None:
+                        utterances = fn(path)
+                        segs0 = _segments_from_longform(utterances)
+                        txt0 = " ".join(s.get("text") or "" for s in segs0).strip()
+                        return txt0, segs0
+                    if "Too long wav file" in msg:
+                        return _chunk_file_transcribe(path)
+                    raise
+
+            for chunk in chunks:
+                t0, seg0 = _safe_transcribe(str(chunk.path))
 
                 t_pp = postprocess_text(t0).strip()
                 if t_pp:
