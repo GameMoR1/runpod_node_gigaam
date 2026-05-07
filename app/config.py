@@ -111,7 +111,8 @@ class Settings(BaseSettings):
 
     VAD_PADDING_SECONDS: float = 0.25
     CHUNK_MIN_SECONDS: float = 3.0
-    CHUNK_MAX_SECONDS: float = 30.0
+    # GigaAM `transcribe()` is strict about max wav duration; keep chunks below the limit.
+    CHUNK_MAX_SECONDS: float = 24.0
     CHUNK_MERGE_GAP_SECONDS: float = 0.8
     CHUNK_SPLIT_OVERLAP_SECONDS: float = 2.0
 

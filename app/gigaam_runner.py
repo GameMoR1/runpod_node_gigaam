@@ -396,11 +396,15 @@ async def transcribe_chunks_on_gpu(
                 dur = _wav_duration_s(path)
                 fn = getattr(model, "transcribe_longform", None)
                 if dur > 25.0 and fn is not None:
-                    utterances = fn(path)
-                    segs0 = _segments_from_longform(utterances)
-                    if segs0:
-                        txt0 = " ".join(s.get("text") or "" for s in segs0).strip()
-                        return txt0, segs0
+                    try:
+                        utterances = fn(path)
+                        segs0 = _segments_from_longform(utterances)
+                        if segs0:
+                            txt0 = " ".join(s.get("text") or "" for s in segs0).strip()
+                            return txt0, segs0
+                    except Exception:
+                        # longform failed → fall back to manual splitting
+                        return _chunk_file_transcribe(path)
 
                 try:
                     out_any = model.transcribe(path)
@@ -414,10 +418,13 @@ async def transcribe_chunks_on_gpu(
                 except ValueError as e:
                     msg = str(e)
                     if "Too long wav file" in msg and fn is not None:
-                        utterances = fn(path)
-                        segs0 = _segments_from_longform(utterances)
-                        txt0 = " ".join(s.get("text") or "" for s in segs0).strip()
-                        return txt0, segs0
+                        try:
+                            utterances = fn(path)
+                            segs0 = _segments_from_longform(utterances)
+                            txt0 = " ".join(s.get("text") or "" for s in segs0).strip()
+                            return txt0, segs0
+                        except Exception:
+                            return _chunk_file_transcribe(path)
                     if "Too long wav file" in msg:
                         return _chunk_file_transcribe(path)
                     raise
