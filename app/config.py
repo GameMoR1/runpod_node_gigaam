@@ -71,11 +71,12 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    DB_HOST: str
-    DB_PORT: int
-    DB_NAME: str
-    DB_USER: str
-    DB_PASS: str
+    # DB settings are required in production, but optional for local import/tests.
+    DB_HOST: str = "localhost"
+    DB_PORT: int = 5432
+    DB_NAME: str = "postgres"
+    DB_USER: str = "postgres"
+    DB_PASS: str = "postgres"
 
     DATA_DIR: str = "data"
     UPLOAD_DIR: str = "data/uploads"
@@ -90,6 +91,29 @@ class Settings(BaseSettings):
     WHISPER_DEFAULT_LANGUAGE: str = "ru"
 
     FFMPEG_PATH: str = "ffmpeg"
+
+    # Audio pipeline (best):
+    # 1) FFmpeg wav 16kHz mono
+    # 2) RNNoise (std) via FFmpeg arnndn
+    # 3) VAD (pyannote preferred)
+    # 4) Hybrid chunking
+    RNNOISE_ENABLED: bool = True
+    RNNOISE_MODEL_URL: str = "https://raw.githubusercontent.com/richardpl/arnndn-models/master/std.rnnn"
+    RNNOISE_MODEL_FILENAME: str = "rnnoise_std.rnnn"
+
+    VAD_METHOD: str = "pyannote"  # pyannote / silero / off
+    PYANNOTE_MODEL: str = "pyannote/voice-activity-detection"
+    PYANNOTE_AUTH_TOKEN: str = ""
+
+    SILERO_VAD_THRESHOLD: float = 0.5
+    SILERO_MIN_SPEECH_DURATION_MS: int = 250
+    SILERO_MIN_SILENCE_DURATION_MS: int = 300
+
+    VAD_PADDING_SECONDS: float = 0.25
+    CHUNK_MIN_SECONDS: float = 3.0
+    CHUNK_MAX_SECONDS: float = 30.0
+    CHUNK_MERGE_GAP_SECONDS: float = 0.8
+    CHUNK_SPLIT_OVERLAP_SECONDS: float = 2.0
 
 
 _apply_env_blob()

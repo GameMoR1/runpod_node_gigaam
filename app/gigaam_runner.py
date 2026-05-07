@@ -5,6 +5,7 @@ from typing import Any
 
 from app.gpu import gpu_metrics
 from app.postprocess import postprocess_text
+from app.vad_chunking import AudioChunk
 
 
 async def transcribe_on_gpu(
@@ -211,6 +212,137 @@ async def transcribe_on_gpu(
         return {
             "text": text_pp,
             "segments": segments,
+            "token_count": token_count,
+            "vram_peak_allocated_mb": peak_alloc_mb,
+            "language": language,
+        }
+
+    sampler_task = asyncio.create_task(sampler())
+    try:
+        res = await asyncio.to_thread(run_blocking_sync)
+    finally:
+        stop.set()
+        try:
+            await sampler_task
+        except Exception:
+            pass
+
+    util, used_mb, total_mb = gpu_metrics(gpu_index)
+    if total_mb and not vram_total_mb:
+        vram_total_mb = total_mb
+
+    util_avg = sum(util_samples) / len(util_samples) if util_samples else util
+    util_max = max(util_samples) if util_samples else util
+    vram_used_avg = sum(vram_samples) / len(vram_samples) if vram_samples else used_mb
+    vram_used_max = max(vram_samples) if vram_samples else used_mb
+    vram_used_pct_max = (vram_used_max / vram_total_mb * 100.0) if vram_total_mb else 0.0
+    vram_used_pct = (used_mb / vram_total_mb * 100.0) if vram_total_mb else 0.0
+
+    res["gpu"] = {
+        "index": gpu_index,
+        "util_avg_percent": util_avg,
+        "util_max_percent": util_max,
+        "vram_total_mb": vram_total_mb,
+        "vram_used_avg_mb": vram_used_avg,
+        "vram_used_max_mb": vram_used_max,
+        "vram_used_percent": vram_used_pct,
+        "vram_used_percent_max": vram_used_pct_max,
+    }
+    return res
+
+
+async def transcribe_chunks_on_gpu(
+    *,
+    gpu_index: int,
+    chunks: list[AudioChunk],
+    model_name: str,
+    language: str,
+) -> dict[str, Any]:
+    util_samples: list[float] = []
+    vram_samples: list[float] = []
+    vram_total_mb: float = 0.0
+
+    stop = asyncio.Event()
+
+    async def sampler() -> None:
+        nonlocal vram_total_mb
+        while not stop.is_set():
+            util, used_mb, total_mb = gpu_metrics(gpu_index)
+            util_samples.append(util)
+            vram_samples.append(used_mb)
+            if total_mb:
+                vram_total_mb = total_mb
+            await asyncio.sleep(0.5)
+
+    def run_blocking_sync() -> dict[str, Any]:
+        import torch
+        import gigaam
+
+        torch.cuda.set_device(gpu_index)
+        torch.cuda.reset_peak_memory_stats(gpu_index)
+
+        model = None
+        try:
+            try:
+                model = gigaam.load_model(model_name, device=f"cuda:{gpu_index}")
+            except TypeError:
+                try:
+                    model = gigaam.load_model(model_name, device="cuda")
+                except TypeError:
+                    model = gigaam.load_model(model_name)
+
+            segs: list[dict[str, Any]] = []
+            texts: list[str] = []
+
+            for chunk in chunks:
+                out_any = model.transcribe(str(chunk.path))
+                if isinstance(out_any, str):
+                    t0 = out_any
+                    seg0: list[dict[str, Any]] = []
+                elif isinstance(out_any, dict):
+                    t0 = out_any.get("text") if isinstance(out_any.get("text"), str) else ""
+                    seg0 = out_any.get("segments") if isinstance(out_any.get("segments"), list) else []
+                    seg0 = [s for s in seg0 if isinstance(s, dict)]
+                else:
+                    t0 = str(out_any)
+                    seg0 = []
+
+                t_pp = postprocess_text(t0).strip()
+                if t_pp:
+                    texts.append(t_pp)
+
+                if seg0:
+                    for s in seg0:
+                        st = s.get("start")
+                        en = s.get("end")
+                        if isinstance(st, (int, float)) and isinstance(en, (int, float)):
+                            s2 = dict(s)
+                            s2["start"] = float(st) + float(chunk.start)
+                            s2["end"] = float(en) + float(chunk.start)
+                            tt = s2.get("text")
+                            if isinstance(tt, str):
+                                s2["text"] = postprocess_text(tt)
+                            segs.append(s2)
+                else:
+                    if t_pp:
+                        segs.append({"start": float(chunk.start), "end": float(chunk.end), "text": t_pp})
+
+            full_text = " ".join(texts).strip()
+        finally:
+            try:
+                del model
+            except Exception:
+                pass
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+        peak_alloc_mb = float(torch.cuda.max_memory_allocated(gpu_index)) / (1024 * 1024)
+        token_count = len(full_text.split()) if full_text else 0
+        return {
+            "text": full_text,
+            "segments": segs,
             "token_count": token_count,
             "vram_peak_allocated_mb": peak_alloc_mb,
             "language": language,
