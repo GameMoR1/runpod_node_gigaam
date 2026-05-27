@@ -173,6 +173,9 @@ class JobQueue:
                 logger.info("job preprocessed: %s", job_id)
                 segments = get_speech_segments(wav_path)
                 chunks = build_hybrid_chunks(audio_path=wav_path, segments=segments, job_dir=job_dir)
+                chunks = [c for c in chunks if c.duration > 0.05]
+                if not chunks:
+                    raise RuntimeError("no transcribable audio after VAD/chunking")
                 result = await transcribe_chunks_on_gpu(
                     gpu_index=gpu_index,
                     chunks=chunks,

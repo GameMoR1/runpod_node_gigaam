@@ -154,7 +154,7 @@ async def transcribe_on_gpu(
             duration_s = _duration_s()
             if duration_s <= 0.01:
                 raise RuntimeError("empty audio after preprocessing")
-            if duration_s and duration_s <= 25.0:
+            if duration_s and duration_s < 24.0:
                 out_short = model.transcribe(wav_path)
                 text0 = _extract_text(out_short)
                 segs0: list[dict[str, Any]] = []
@@ -395,7 +395,7 @@ async def transcribe_chunks_on_gpu(
                 """
                 dur = _wav_duration_s(path)
                 fn = getattr(model, "transcribe_longform", None)
-                if dur > 25.0 and fn is not None:
+                if dur >= 24.0 and fn is not None:
                     try:
                         utterances = fn(path)
                         segs0 = _segments_from_longform(utterances)

@@ -112,8 +112,25 @@ def _get_pyannote_segments(audio_path: Path) -> list[AudioSegment]:
     return segs
 
 
+def _split_segment(seg: AudioSegment, max_dur: float, *, source: str) -> list[AudioSegment]:
+    if seg.duration <= max_dur:
+        return [seg]
+    out: list[AudioSegment] = []
+    start = seg.start
+    overlap = min(2.0, float(settings.CHUNK_SPLIT_OVERLAP_SECONDS))
+    while start < seg.end:
+        end = min(seg.end, start + max_dur)
+        if end - start > 0.01:
+            out.append(AudioSegment(start=start, end=end, source=source))
+        if end >= seg.end:
+            break
+        start = max(start + 0.01, end - overlap)
+    return out
+
+
 def build_hybrid_chunks(*, audio_path: Path, segments: list[AudioSegment], job_dir: Path) -> list[AudioChunk]:
     duration = get_audio_duration_s(audio_path)
+    safe_max = float(settings.GIGAAM_MAX_WAV_SECONDS)
 
     sorted_segments = sorted(segments, key=lambda s: s.start)
     merged: list[AudioSegment] = []
@@ -135,33 +152,41 @@ def build_hybrid_chunks(*, audio_path: Path, segments: list[AudioSegment], job_d
     final: list[AudioSegment] = []
     for seg in merged:
         if seg.duration <= settings.CHUNK_MAX_SECONDS:
-            final.append(seg)
+            final.extend(_split_segment(seg, settings.CHUNK_MAX_SECONDS, source="vad_hybrid"))
             continue
-        start = seg.start
-        overlap = min(2.0, float(settings.CHUNK_SPLIT_OVERLAP_SECONDS))
-        while start < seg.end:
-            end = min(seg.end, start + settings.CHUNK_MAX_SECONDS)
-            final.append(AudioSegment(start=start, end=end, source="vad_hybrid_split"))
-            if end >= seg.end:
-                break
-            start = max(start + 0.01, end - overlap)
+        final.extend(_split_segment(seg, settings.CHUNK_MAX_SECONDS, source="vad_hybrid_split"))
+
+    padded_final: list[AudioSegment] = []
+    for seg in final:
+        start = max(0.0, seg.start - settings.VAD_PADDING_SECONDS)
+        end = min(duration, seg.end + settings.VAD_PADDING_SECONDS)
+        if end <= start + 0.01:
+            continue
+        padded_final.extend(_split_segment(
+            AudioSegment(start=start, end=end, source="vad_padded"),
+            safe_max,
+            source="vad_padded_split",
+        ))
+
+    if not padded_final:
+        padded_final = _split_segment(
+            AudioSegment(start=0.0, end=duration, source="full_file_fallback"),
+            safe_max,
+            source="full_file_fallback_split",
+        )
 
     out_dir = job_dir / "chunks"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     chunks: list[AudioChunk] = []
-    for idx, seg in enumerate(final):
-        start = max(0.0, seg.start - settings.VAD_PADDING_SECONDS)
-        end = min(duration, seg.end + settings.VAD_PADDING_SECONDS)
-        if end <= start + 0.01:
-            continue
+    for idx, seg in enumerate(padded_final):
+        start = seg.start
+        end = seg.end
         out_path = out_dir / f"chunk_{idx:04d}_{start:.2f}_{end:.2f}.wav"
         if not out_path.exists():
             _extract_chunk_ffmpeg(audio_path=audio_path, out_path=out_path, start=start, end=end)
         chunks.append(AudioChunk(path=out_path, start=start, end=end))
 
-    if not chunks:
-        chunks = [AudioChunk(path=audio_path, start=0.0, end=duration)]
     return chunks
 
 
