@@ -51,6 +51,22 @@ def torch_cuda_device_count() -> int:
         return 0
 
 
+def cuda_inference_active() -> bool:
+    return torch_cuda_available() and torch_cuda_device_count() > 0 and gpu_count() > 0
+
+
+def worker_count() -> int:
+    if cuda_inference_active():
+        return gpu_count()
+    return 1
+
+
+def inference_device(gpu_index: int) -> str:
+    if cuda_inference_active():
+        return f"cuda:{gpu_index}"
+    return "cpu"
+
+
 def gpu_name(index: int) -> str:
     if not _HAS_TORCH:
         return f"GPU {index}"

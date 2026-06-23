@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from app.gpu import gpu_metrics
+from app.gpu import cuda_inference_active, gpu_metrics, inference_device
 from app.postprocess import postprocess_text
 from app.vad_chunking import AudioChunk
 
@@ -42,17 +42,22 @@ async def transcribe_on_gpu(
         import torch
         import gigaam
 
-        torch.cuda.set_device(gpu_index)
-        torch.cuda.reset_peak_memory_stats(gpu_index)
+        device = inference_device(gpu_index)
+        if cuda_inference_active():
+            torch.cuda.set_device(gpu_index)
+            torch.cuda.reset_peak_memory_stats(gpu_index)
 
         model = None
         try:
             try:
-                model = gigaam.load_model(model_name, device=f"cuda:{gpu_index}")
+                model = gigaam.load_model(model_name, device=device)
             except TypeError:
-                try:
-                    model = gigaam.load_model(model_name, device="cuda")
-                except TypeError:
+                if device.startswith("cuda"):
+                    try:
+                        model = gigaam.load_model(model_name, device="cuda")
+                    except TypeError:
+                        model = gigaam.load_model(model_name)
+                else:
                     model = gigaam.load_model(model_name)
 
             def _duration_s() -> float:
@@ -184,10 +189,11 @@ async def transcribe_on_gpu(
                 del model
             except Exception:
                 pass
-            try:
-                torch.cuda.empty_cache()
-            except Exception:
-                pass
+            if cuda_inference_active():
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
 
         text = out.get("text") if isinstance(out, dict) else ""
         segments = out.get("segments") if isinstance(out, dict) and isinstance(out.get("segments"), list) else []
@@ -207,7 +213,9 @@ async def transcribe_on_gpu(
                 t = s.get("text") if isinstance(s, dict) else None
                 if isinstance(t, str) and t:
                     token_count += len(postprocess_text(t).split())
-        peak_alloc_mb = float(torch.cuda.max_memory_allocated(gpu_index)) / (1024 * 1024)
+        peak_alloc_mb = 0.0
+        if cuda_inference_active():
+            peak_alloc_mb = float(torch.cuda.max_memory_allocated(gpu_index)) / (1024 * 1024)
 
         return {
             "text": text_pp,
@@ -283,17 +291,22 @@ async def transcribe_chunks_on_gpu(
         import torch
         import gigaam
 
-        torch.cuda.set_device(gpu_index)
-        torch.cuda.reset_peak_memory_stats(gpu_index)
+        device = inference_device(gpu_index)
+        if cuda_inference_active():
+            torch.cuda.set_device(gpu_index)
+            torch.cuda.reset_peak_memory_stats(gpu_index)
 
         model = None
         try:
             try:
-                model = gigaam.load_model(model_name, device=f"cuda:{gpu_index}")
+                model = gigaam.load_model(model_name, device=device)
             except TypeError:
-                try:
-                    model = gigaam.load_model(model_name, device="cuda")
-                except TypeError:
+                if device.startswith("cuda"):
+                    try:
+                        model = gigaam.load_model(model_name, device="cuda")
+                    except TypeError:
+                        model = gigaam.load_model(model_name)
+                else:
                     model = gigaam.load_model(model_name)
 
             segs: list[dict[str, Any]] = []
@@ -458,12 +471,15 @@ async def transcribe_chunks_on_gpu(
                 del model
             except Exception:
                 pass
-            try:
-                torch.cuda.empty_cache()
-            except Exception:
-                pass
+            if cuda_inference_active():
+                try:
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
 
-        peak_alloc_mb = float(torch.cuda.max_memory_allocated(gpu_index)) / (1024 * 1024)
+        peak_alloc_mb = 0.0
+        if cuda_inference_active():
+            peak_alloc_mb = float(torch.cuda.max_memory_allocated(gpu_index)) / (1024 * 1024)
         token_count = len(full_text.split()) if full_text else 0
         return {
             "text": full_text,

@@ -12,7 +12,7 @@ import httpx
 
 from app.config import settings
 from app.ffmpeg_proc import preprocess_to_wav
-from app.gpu import gpu_count, gpu_metrics, gpu_name, torch_cuda_available, torch_cuda_device_count
+from app.gpu import cuda_inference_active, gpu_count, gpu_metrics, gpu_name, worker_count
 from app.model_registry import ModelRegistry
 from app.types import GpuState, JobRecord
 from app.utils_time import now_ms, ms_to_s
@@ -35,15 +35,11 @@ class JobQueue:
         self._completed_total = 0
 
     async def start_workers(self) -> None:
-        n = gpu_count()
-        if n <= 0:
-            raise RuntimeError("no NVIDIA GPUs detected")
-
-        if not torch_cuda_available() or torch_cuda_device_count() <= 0:
-            raise RuntimeError(
-                "torch is installed without CUDA support; install a CUDA-enabled PyTorch build"
-            )
-        logger.info("starting workers: %d", n)
+        n = worker_count()
+        if cuda_inference_active():
+            logger.info("starting workers: %d", n)
+        else:
+            logger.info("starting CPU worker (no GPU detected)")
         self._workers = []
         self._stop.clear()
         for idx in range(n):
