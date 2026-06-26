@@ -28,7 +28,7 @@ def _check_gigaam_module() -> None:
     try:
         import gigaam  # noqa: F401
     except Exception as e:
-        raise RuntimeError("python module 'gigaam' is not installed") from e
+        raise RuntimeError(f"gigaam import failed: {e}") from e
 
 
 @dataclass

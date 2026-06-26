@@ -1,0 +1,9 @@
+# GigaAM core dependencies (from upstream pyproject.toml).
+# Installed before `gigaam --no-deps` so base-image torch is not upgraded.
+hydra-core==1.3.*
+omegaconf==2.3.*
+numpy==2.*
+onnx==1.19.*
+onnxruntime==1.23.*
+soundfile
+tqdm
