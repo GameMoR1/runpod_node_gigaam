@@ -62,7 +62,80 @@ _HF_V3_REVISIONS = {
     "e2e_rnnt": "e2e_rnnt",
 }
 
+_HF_TARGET_PREFIX = "modeling_gigaam."
+_NATIVE_TARGET_MAP = {
+    "FeatureExtractor": "gigaam.preprocess.FeatureExtractor",
+    "ConformerEncoder": "gigaam.encoder.ConformerEncoder",
+    "RNNTHead": "gigaam.decoder.RNNTHead",
+    "CTCHead": "gigaam.decoder.CTCHead",
+    "RNNTGreedyDecoding": "gigaam.decoding.RNNTGreedyDecoding",
+    "CTCGreedyDecoding": "gigaam.decoding.CTCGreedyDecoding",
+    "GigaAMASR": "gigaam.model.GigaAMASR",
+    "GigaAM": "gigaam.model.GigaAM",
+    "GigaAMEmo": "gigaam.model.GigaAMEmo",
+}
+_STATE_DICT_PREFIXES = ("gigaam.model.", "gigaam.", "model.")
+
 _gigaam_download_patch_applied = False
+
+
+def _rewrite_hf_target(target: str) -> str:
+    if not isinstance(target, str) or not target.startswith(_HF_TARGET_PREFIX):
+        return target
+    short_name = target[len(_HF_TARGET_PREFIX) :]
+    return _NATIVE_TARGET_MAP.get(short_name, target)
+
+
+def _normalize_hf_cfg_node(node: object) -> object:
+    if isinstance(node, dict):
+        out: dict = {}
+        for key, value in node.items():
+            if key == "_target_" and isinstance(value, str):
+                out[key] = _rewrite_hf_target(value)
+            elif key == "vocabulary" and value is None:
+                out[key] = []
+            else:
+                out[key] = _normalize_hf_cfg_node(value)
+        return out
+    if isinstance(node, list):
+        return [_normalize_hf_cfg_node(item) for item in node]
+    return node
+
+
+def _normalize_hf_model_cfg(model_cfg: dict) -> dict:
+    normalized = _normalize_hf_cfg_node(model_cfg)
+    if not isinstance(normalized, dict):
+        raise RuntimeError("invalid HuggingFace model config")
+    return normalized
+
+
+def _ckpt_needs_rebuild(ckpt_path: Path) -> bool:
+    import torch
+
+    try:
+        checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    except Exception:
+        return True
+
+    cfg = checkpoint.get("cfg") if isinstance(checkpoint, dict) else None
+    if cfg is None:
+        return True
+
+    try:
+        import omegaconf
+
+        cfg_text = omegaconf.OmegaConf.to_yaml(cfg)
+    except Exception:
+        cfg_text = str(cfg)
+    return _HF_TARGET_PREFIX in cfg_text
+
+
+def _invalidate_cached_ckpt(dest: Path) -> None:
+    if dest.suffix != ".ckpt" or not dest.exists():
+        return
+    if _ckpt_needs_rebuild(dest):
+        logger.warning("removing incompatible cached gigaam ckpt: %s", dest.name)
+        dest.unlink(missing_ok=True)
 
 
 def is_gigaam_model(model_name: str) -> bool:
@@ -135,12 +208,11 @@ def _to_native_state_dict(raw: object) -> dict:
         raise RuntimeError("unexpected HuggingFace state_dict format")
 
     native: dict = {}
-    prefixes = ("gigaam.", "model.")
     for key, value in state_dict.items():
         if not isinstance(key, str):
             continue
         new_key = key
-        for prefix in prefixes:
+        for prefix in _STATE_DICT_PREFIXES:
             if new_key.startswith(prefix):
                 new_key = new_key[len(prefix) :]
                 break
@@ -162,7 +234,7 @@ def _build_ckpt_from_hf(*, model_name: str, ckpt_path: Path, revision: str) -> N
     if not isinstance(model_cfg, dict):
         raise RuntimeError(f"invalid HuggingFace config for {model_name}")
 
-    cfg = omegaconf.OmegaConf.create(model_cfg)
+    cfg = omegaconf.OmegaConf.create(_normalize_hf_model_cfg(model_cfg))
     state_dict = _to_native_state_dict(torch.load(weights_path, map_location="cpu", weights_only=False))
 
     ckpt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -187,6 +259,7 @@ def _download_tokenizer_from_hf(*, model_name: str, dest: Path, revision: str) -
 
 
 def _download_asset(file_name: str, dest: Path) -> None:
+    _invalidate_cached_ckpt(dest)
     if dest.exists():
         return
 
@@ -260,6 +333,7 @@ def apply_gigaam_download_patch() -> None:
 
     def patched_download_file(file_url: str, file_path: str) -> str:
         dest = Path(file_path)
+        _invalidate_cached_ckpt(dest)
         if dest.exists():
             return file_path
 
