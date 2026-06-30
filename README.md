@@ -189,8 +189,6 @@ Response:
 - список GPU: util/VRAM (used/total/%), текущий `job_id` и модель на GPU
 - счётчики задач и списки `job_id` (queue/processing)
 
-Детали задач (callback_url, тексты, ошибки, результаты) на дашборде не отображаются.
-
 Данные обновляются автоматически через WebSocket `GET /ws/dashboard` (fallback: polling `GET /dashboard/state`).
 
 {"cmd":["bash","-c","apt update \u0026\u0026 apt install ffmpeg -y \u0026\u0026 git clone https://github.com/GameMoR1/runpod_node_whisper.git \u0026\u0026 cd runpod_node_whisper \u0026\u0026 pip install -r requirements.txt \u0026\u0026 python run.py"]}
