@@ -11,6 +11,7 @@ from typing import Optional
 from app.config import settings
 from app.db import dispose_engine, fetch_hugging_face_token
 from app.error_log import log_node_error
+from app.gigaam_assets import apply_gigaam_download_patch
 from app.model_registry import ModelRegistry
 from app.queueing import JobQueue
 from app.types import HealthStatus
@@ -80,6 +81,11 @@ class AppState:
                 os.environ["HUGGINGFACEHUB_API_TOKEN"] = token
         except Exception:
             pass
+
+        try:
+            apply_gigaam_download_patch()
+        except Exception:
+            logger.warning("failed to apply gigaam download patch", exc_info=True)
 
         while True:
             try:

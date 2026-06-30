@@ -8,7 +8,14 @@ from typing import Optional
 
 from app.config import settings
 from app.db import fetch_all
-from app.gigaam_assets import gigaam_cache_dir, is_gigaam_model, preload_tokenizer
+from app.gigaam_assets import (
+    GIGAAM_CDN_URL,
+    apply_gigaam_download_patch,
+    ensure_gigaam_assets,
+    gigaam_cache_dir,
+    is_gigaam_model,
+    preload_tokenizer,
+)
 from app.types import ModelState
 
 
@@ -132,12 +139,14 @@ class ModelRegistry:
 
             if not is_gigaam_model(model_name):
                 raise RuntimeError("unknown gigaam model")
+            apply_gigaam_download_patch()
             cache_dir = gigaam_cache_dir(settings.MODEL_CACHE_DIR)
             cache_dir.mkdir(parents=True, exist_ok=True)
+            ensure_gigaam_assets(model_name=model_name, cache_dir=cache_dir)
             preload_tokenizer(
                 model_name=model_name,
                 cache_dir=cache_dir,
-                url_dir="https://cdn.chatwm.opensmodel.sberdevices.ru/GigaAM",
+                url_dir=GIGAAM_CDN_URL,
             )
 
             import gigaam
